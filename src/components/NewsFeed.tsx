@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { collection, onSnapshot, doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase';
-import { Newspaper, TrendingUp, TrendingDown, Sparkles, Filter } from 'lucide-react';
+import { Newspaper, TrendingUp, TrendingDown, Sparkles, Filter, Megaphone, Clock } from 'lucide-react';
 import { seedDefaultNews } from '../lib/stockData';
 import { useAuth } from './AuthProvider';
+import { useMarketState, formatCountdown } from '../lib/marketState';
 
 interface NewsFeedProps {
   onSelectTicker?: (ticker: string) => void;
@@ -14,6 +15,14 @@ export default function NewsFeed({ onSelectTicker }: NewsFeedProps) {
   const [news, setNews] = useState<any[]>([]);
   const [filterTicker, setFilterTicker] = useState<string>('ALL');
   const [seeding, setSeeding] = useState(false);
+  const { activeEvent } = useMarketState();
+  const [nowMs, setNowMs] = useState(Date.now());
+
+  useEffect(() => {
+    if (!activeEvent) return;
+    const id = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [activeEvent?.eventId]);
 
   useEffect(() => {
     const unsub = onSnapshot(collection(db, 'news'), (snap) => {
@@ -56,8 +65,8 @@ export default function NewsFeed({ onSelectTicker }: NewsFeedProps) {
             <Newspaper className="w-4 h-4" />
           </div>
           <div>
-            <h3 className="font-bold text-zinc-900 text-sm">Financial News & Catalysts</h3>
-            <span className="text-[11px] text-zinc-500">Live sentiment drivers impacting market prices</span>
+            <h3 className="font-bold text-zinc-900 text-sm">Market News</h3>
+            <span className="text-[11px] text-zinc-500">Each news event moves prices for 15 minutes</span>
           </div>
         </div>
 
@@ -94,6 +103,53 @@ export default function NewsFeed({ onSelectTicker }: NewsFeedProps) {
 
       {/* News List */}
       <div className="flex-1 overflow-y-auto p-4 space-y-3 min-h-[280px]">
+        {activeEvent && (
+          <div
+            className={`p-3 rounded-xl border-2 space-y-2 ${
+              activeEvent.sentiment === 'POSITIVE'
+                ? 'border-emerald-300 bg-emerald-50/70'
+                : 'border-rose-300 bg-rose-50/70'
+            }`}
+          >
+            <div className="flex items-center justify-between gap-2">
+              <span
+                className={`text-[10px] font-black uppercase tracking-wider text-white px-2 py-0.5 rounded-full flex items-center gap-1 ${
+                  activeEvent.sentiment === 'POSITIVE' ? 'bg-emerald-600' : 'bg-rose-600'
+                }`}
+              >
+                <Megaphone className="w-3 h-3" /> Active Now
+              </span>
+              <span className="text-[11px] font-mono font-bold text-zinc-700 flex items-center gap-1 tabular-nums">
+                <Clock className="w-3 h-3" />
+                {formatCountdown(activeEvent.expiresAtMs - nowMs)} left
+              </span>
+            </div>
+            <h4 className="font-extrabold text-sm text-zinc-900 leading-snug">{activeEvent.headline}</h4>
+            {activeEvent.description && (
+              <p className="text-[11px] text-zinc-700 leading-relaxed">{activeEvent.description}</p>
+            )}
+            {activeEvent.affectedStocks.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {activeEvent.affectedStocks.map((s) => (
+                  <button
+                    key={s.ticker}
+                    onClick={() => onSelectTicker && onSelectTicker(s.ticker)}
+                    className={`text-[10px] font-bold px-2 py-0.5 rounded-md flex items-center gap-1 cursor-pointer transition-colors duration-200 ${
+                      s.direction === 'UP'
+                        ? 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200'
+                        : 'bg-rose-100 text-rose-800 hover:bg-rose-200'
+                    }`}
+                  >
+                    {s.direction === 'UP' ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
+                    {s.ticker}
+                    {s.strength && <span className="font-medium opacity-80">· {s.strength.toLowerCase()}</span>}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         {filteredNews.map(item => {
           const isBull = item.sentiment === 'BULLISH';
           const isBear = item.sentiment === 'BEARISH';
@@ -145,7 +201,7 @@ export default function NewsFeed({ onSelectTicker }: NewsFeedProps) {
           );
         })}
 
-        {filteredNews.length === 0 && (
+        {filteredNews.length === 0 && !activeEvent && (
           <div className="text-center py-10 text-zinc-400 space-y-1">
             <Newspaper className="w-8 h-8 mx-auto text-zinc-300 mb-2" />
             <p className="text-xs font-medium text-zinc-600">No market catalysts recorded yet</p>

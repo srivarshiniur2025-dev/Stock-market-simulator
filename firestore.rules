@@ -8,7 +8,12 @@ service cloud.firestore {
          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
       );
     }
-    
+
+    function isMember(sessionId) {
+      return request.auth != null && sessionId is string &&
+        exists(/databases/$(database)/documents/sessions/$(sessionId)/participants/$(request.auth.uid));
+    }
+
     match /users/{userId} {
       allow read: if request.auth != null;
       allow write: if request.auth != null && (request.auth.uid == userId || isAdmin());
@@ -21,8 +26,33 @@ service cloud.firestore {
       allow read: if request.auth != null;
       allow write: if request.auth != null;
     }
-    match /holdings/{docId} {
+
+    // Competition sessions. Participants only see data of sessions they joined.
+    match /sessions/{sessionId} {
       allow read: if request.auth != null;
+      allow write: if isAdmin();
+
+      match /participants/{uid} {
+        allow read: if isAdmin() || (request.auth != null && request.auth.uid == uid) || isMember(sessionId);
+        allow create: if request.auth != null && request.auth.uid == uid &&
+          request.resource.data.userId == uid &&
+          get(/databases/$(database)/documents/sessions/$(sessionId)).data.status != 'COMPLETED' &&
+          get(/databases/$(database)/documents/sessions/$(sessionId)).data.get('acceptingParticipants', true) != false &&
+          request.resource.data.currentCash == get(/databases/$(database)/documents/sessions/$(sessionId)).data.startingBalance &&
+          request.resource.data.startingBalance == get(/databases/$(database)/documents/sessions/$(sessionId)).data.startingBalance;
+        allow update: if isAdmin() || (
+          request.auth != null && request.auth.uid == uid &&
+          request.resource.data.userId == resource.data.userId &&
+          request.resource.data.startingBalance == resource.data.startingBalance
+        );
+        allow delete: if isAdmin();
+      }
+    }
+
+    match /holdings/{docId} {
+      allow read: if isAdmin() ||
+        (request.auth != null && resource.data.userId == request.auth.uid) ||
+        isMember(resource.data.get('sessionId', null));
       allow write: if request.auth != null && (
         isAdmin() || 
         (resource == null && request.resource.data.userId == request.auth.uid) ||
@@ -30,7 +60,9 @@ service cloud.firestore {
       );
     }
     match /transactions/{docId} {
-      allow read: if request.auth != null;
+      allow read: if isAdmin() ||
+        (request.auth != null && resource.data.userId == request.auth.uid) ||
+        isMember(resource.data.get('sessionId', null));
       allow write: if request.auth != null && (
         isAdmin() || 
         (resource == null && request.resource.data.userId == request.auth.uid) ||
@@ -42,8 +74,8 @@ service cloud.firestore {
       allow write: if request.auth != null;
     }
     match /news/{newsId} {
-      allow read: if request.auth != null;
-      allow write: if request.auth != null;
+      allow read: if isAdmin() || isMember(resource.data.get('sessionId', null));
+      allow write: if isAdmin();
     }
   }
 }

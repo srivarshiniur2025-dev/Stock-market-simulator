@@ -13,6 +13,7 @@ import {
   Timestamp 
 } from 'firebase/firestore';
 import { db } from '../firebase';
+import SessionsManager from '../components/admin/SessionsManager';
 import { 
   Play, 
   Pause, 
@@ -74,6 +75,7 @@ export default function AdminPanel() {
   const [newsTicker, setNewsTicker] = useState('ALL');
   const [newsSentiment, setNewsSentiment] = useState<'BULLISH' | 'BEARISH'>('BULLISH');
   const [newsImpact, setNewsImpact] = useState('0.03');
+  const [targetSession, setTargetSession] = useState<{ id: string; code: string } | null>(null);
 
   // Edit stock modal
   const [editingStock, setEditingStock] = useState<any | null>(null);
@@ -264,10 +266,12 @@ export default function AdminPanel() {
   const handleBroadcastNews = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newsHeadline.trim()) return;
+    if (!targetSession) { showNotification('error', 'Select a session above before publishing news.'); return; }
     setLoading(true);
     try {
       const imp = parseFloat(newsImpact) || 0.03;
       await addDoc(collection(db, 'news'), {
+        sessionId: targetSession.id,
         headline: newsHeadline.trim(),
         summary: newsSummary.trim() || newsHeadline.trim(),
         ticker: newsTicker,
@@ -288,9 +292,11 @@ export default function AdminPanel() {
 
   // 1-Click Quick Catalysts
   const handleQuickCatalyst = async (preset: { headline: string; summary: string; ticker: string; sentiment: string; impact: number }) => {
+    if (!targetSession) { showNotification('error', 'Select a session above before publishing news.'); return; }
     try {
       await addDoc(collection(db, 'news'), {
         ...preset,
+        sessionId: targetSession.id,
         timestamp: serverTimestamp(),
       });
       showNotification('success', `Catalyst deployed: "${preset.headline.slice(0, 30)}..."`);
@@ -466,6 +472,12 @@ export default function AdminPanel() {
           <button onClick={() => setMsg(null)} className="text-xs opacity-60 hover:opacity-100 cursor-pointer">✕</button>
         </div>
       )}
+
+      <SessionsManager
+        selectedId={targetSession?.id ?? null}
+        onSelect={(id, code) => setTargetSession(id ? { id, code: code || '' } : null)}
+        notify={showNotification}
+      />
 
       {/* Primary Market Controller Banner */}
       <div className="bg-white p-6 rounded-3xl shadow-sm border border-zinc-200 space-y-6">
@@ -667,7 +679,9 @@ export default function AdminPanel() {
               </div>
               <div>
                 <h3 className="font-bold text-zinc-900 text-sm">Publish Market Catalyst</h3>
-                <p className="text-[11px] text-zinc-500">Injects news to move price action in real time</p>
+                <p className="text-[11px] text-zinc-500">
+                  {targetSession ? <>Publishes to session <span className="font-mono font-bold text-zinc-800">{targetSession.code}</span></> : 'Select a session above to publish news'}
+                </p>
               </div>
             </div>
 

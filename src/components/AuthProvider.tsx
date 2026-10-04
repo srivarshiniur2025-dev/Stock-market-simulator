@@ -1,7 +1,20 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { User, onAuthStateChanged, signOut as firebaseSignOut } from 'firebase/auth';
+import { User, onAuthStateChanged, signInAnonymously, signOut as firebaseSignOut } from 'firebase/auth';
 import { doc, onSnapshot, getDocs, collection, setDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from '../firebase';
+// Login screen is skipped in local development (guest sign-in). Set VITE_SKIP_LOGIN=false to restore it,
+// or VITE_SKIP_LOGIN=true to skip it in a production build as well.
+const env = (import.meta as any).env || {};
+export const SKIP_LOGIN = env.VITE_SKIP_LOGIN ? env.VITE_SKIP_LOGIN === 'true' : !!env.DEV;
+
+const PREVIEW_USER = { uid: 'local-preview-user', email: null, displayName: 'Guest Trader', isAnonymous: true } as unknown as User;
+const PREVIEW_USER_DATA: UserData = {
+  role: 'participant',
+  name: 'Guest Trader',
+  currentCash: 100000,
+  portfolioValue: 100000,
+  startingBalance: 100000,
+};
 
 interface UserData {
   role: 'admin' | 'participant';
@@ -33,6 +46,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const unsubscribeAuth = onAuthStateChanged(auth, (firebaseUser) => {
+      if (!firebaseUser && SKIP_LOGIN) {
+        signInAnonymously(auth).catch((err) => {
+          console.warn('Guest sign-in failed (enable Anonymous auth in Firebase). Using local preview user:', err);
+          setUser(PREVIEW_USER);
+        });
+        return;
+      }
       setUser(firebaseUser);
       if (!firebaseUser) {
         setUserData(null);
@@ -43,9 +63,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => unsubscribeAuth();
   }, []);
 
+  // If guest sign-in or the profile read stalls, don't leave the preview stuck on the loading screen.
+  useEffect(() => {
+    if (!SKIP_LOGIN || userData) return;
+    const t = setTimeout(() => {
+      console.warn('Guest session did not finish loading; using local preview user.');
+      setUser(PREVIEW_USER);
+    }, 8000);
+    return () => clearTimeout(t);
+  }, [userData]);
+
   useEffect(() => {
     let unsubscribeDoc = () => {};
-    if (user) {
+    if (user === PREVIEW_USER) {
+      setUserData(PREVIEW_USER_DATA);
+      setLoading(false);
+    } else if (user) {
       setLoading(true);
       unsubscribeDoc = onSnapshot(
         doc(db, 'users', user.uid),
@@ -78,7 +111,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               const startingBalance = 100000;
               const newProfile: UserData = {
                 email: user.email || '',
-                name: user.displayName || user.email?.split('@')[0] || 'Trader',
+                name: user.displayName || user.email?.split('@')[0] || (user.isAnonymous ? 'Guest Trader' : 'Trader'),
                 role: (isFirstUser || isOwner) ? ('admin' as const) : ('participant' as const),
                 startingBalance,
                 currentCash: startingBalance,
@@ -108,6 +141,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         },
         (error) => {
           console.error('User doc snapshot error:', error);
+          if (SKIP_LOGIN) {
+            setUser(PREVIEW_USER);
+            return;
+          }
           setLoading(false);
         }
       );
@@ -119,11 +156,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [user]);
 
   const signOut = async () => {
+    if (SKIP_LOGIN) return;
     await firebaseSignOut(auth);
   };
 
   return (
-    <AuthContext.Provider value={{ user, userData, loading, signOut }}>
+    <AuthContext.Provider
+      value={{ user, userData, loading, signOut }}
+    >
       {children}
     </AuthContext.Provider>
   );
